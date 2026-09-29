@@ -1295,6 +1295,50 @@ HRESULT CoreAudioUtil::SetOffloadForClient(IAudioClient* client, bool is_offload
   return hr;
 }
 
+HRESULT CoreAudioUtil::InitializeSharedClient(IAudioClient* client,
+                                              DWORD stream_flags,
+                                              const WaveFormatWrapper format,
+                                              uint32_t requested_buffer_size,
+                                              const GUID* session_guid) {
+  HRESULT hr;
+
+  if (requested_buffer_size > 0) {
+    // Try to obtain an IAudioClient3 interface from the IAudioClient object.
+    // Use ComPtr::As for doing QueryInterface calls on COM objects.
+    ComPtr<IAudioClient> audio_client(client);
+    ComPtr<IAudioClient3> audio_client_3;
+
+    {
+      TRACE_EVENT0("audio", "IAudioClient::QueryInterface_IAudioClient3");
+      hr = audio_client.As(&audio_client_3);
+    }
+    if (FAILED(hr)) {
+      DVLOG(1) << "Failed to obtain IAudioClient3 interface: " << std::hex << hr;
+      return hr;
+    }
+
+    // Initialize a low-latency client using IAudioClient3.
+    {
+      TRACE_EVENT0("audio", "IAudioClient3::InitializeSharedAudioStream");
+      hr = audio_client_3->InitializeSharedAudioStream(
+          stream_flags, requested_buffer_size, format, session_guid);
+    }
+    if (FAILED(hr))
+      DVLOG(1) << "IAudioClient3::InitializeSharedAudioStream: " << std::hex << hr;
+    return hr;
+  }
+
+  // Initialize the shared client for minimal delay.
+  {
+    TRACE_EVENT0("audio", "IAudioClient::Initialize");
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags, 0, 0,
+                            format, session_guid);
+  }
+  if (FAILED(hr))
+    DVLOG(1) << "IAudioClient::Initialize: " << std::hex << hr;
+  return hr;
+}
+
 HRESULT CoreAudioUtil::SharedModeInitialize(IAudioClient* client,
                                             const WaveFormatWrapper format,
                                             HANDLE event_handle,
@@ -1325,43 +1369,10 @@ HRESULT CoreAudioUtil::SharedModeInitialize(IAudioClient* client,
 
   HRESULT hr;
 
-  if (requested_buffer_size > 0) {
-    // Try to obtain an IAudioClient3 interface from the IAudioClient object.
-    // Use ComPtr::As for doing QueryInterface calls on COM objects.
-    ComPtr<IAudioClient> audio_client(client);
-    ComPtr<IAudioClient3> audio_client_3;
-    {
-      TRACE_EVENT0("audio", "IAudioClient::QueryInterface_IAudioClient3");
-      hr = audio_client.As(&audio_client_3);
-    }
-    if (FAILED(hr)) {
-      DVLOG(1) << "Failed to obtain IAudioClient3 interface: " << std::hex
-               << hr;
-      return hr;
-    }
-    // Initialize a low-latency client using IAudioClient3.
-    {
-      TRACE_EVENT0("audio", "IAudioClient3::InitializeSharedAudioStream");
-      hr = audio_client_3->InitializeSharedAudioStream(
-          stream_flags, requested_buffer_size, format, session_guid);
-    }
-    if (FAILED(hr)) {
-      DVLOG(1) << "IAudioClient3::InitializeSharedAudioStream: " << std::hex
-               << hr;
-      return hr;
-    }
-  } else {
-    // Initialize the shared mode client for minimal delay.
-    {
-      TRACE_EVENT0("audio", "IAudioClient::Initialize");
-      hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags, 0, 0,
-                              format, session_guid);
-    }
-    if (FAILED(hr)) {
-      DVLOG(1) << "IAudioClient::Initialize: " << std::hex << hr;
-      return hr;
-    }
-  }
+  hr = InitializeSharedClient(client, stream_flags, format, requested_buffer_size,
+                              session_guid);
+  if (FAILED(hr))
+    return hr;
 
   if (use_event) {
     {

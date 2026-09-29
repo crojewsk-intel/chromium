@@ -249,6 +249,12 @@ class MEDIA_EXPORT CoreAudioUtil {
 
   static HRESULT SetOffloadForClient(IAudioClient* client, bool is_offload);
 
+  static HRESULT InitializeSharedClient(IAudioClient* client,
+                                        DWORD stream_flags,
+                                        const WaveFormatWrapper format,
+                                        uint32_t requested_buffer_size,
+                                        const GUID* session_guid);
+
   // After activating an IAudioClient interface on an audio endpoint device,
   // the client must initialize it once, and only once, to initialize the audio
   // stream between the client and the device. In shared mode, the client
