@@ -1590,7 +1590,7 @@ BASE_FEATURE(kAudioDuckingWin, base::FEATURE_ENABLED_BY_DEFAULT);
 // Enables audio offload when supported by endpoints.
 BASE_FEATURE(kAudioOffload, base::FEATURE_DISABLED_BY_DEFAULT);
 // The buffer time in milliseconds for audio offload.
-const base::FeatureParam<double> kAudioOffloadBufferTimeMs{
+const base::FeatureParam<size_t> kAudioOffloadBufferTimeMs{
     &kAudioOffload, "buffer_time_ms", 50};
 
 // Controls whether hardware H264 is default enabled on Windows.

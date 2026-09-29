@@ -68,6 +68,11 @@ REFERENCE_TIME BufferSizeInFramesToTimeDelta(uint32_t frames,
                           0.5f);
 }
 
+// In 100-nanosecond units, see IAudioClient::Initialize() and hnsBufferDuration.
+REFERENCE_TIME GetOffloadBufferTime() {
+  return media::kAudioOffloadBufferTimeMs.Get() * 10000;
+}
+
 void LogVoiceProcessingEffectsHistogram(int value) {
   base::UmaHistogramSparse("Media.Audio.Capture.Win.VoiceProcessingEffects",
                            value);
@@ -508,6 +513,96 @@ ComPtr<IAudioClient3> CreateClientInternal3(IMMDevice* audio_device,
   return audio_client;
 }
 
+HRESULT IsOffloadCapable(IAudioClient* client, bool* offload_capable) {
+  ComPtr<IAudioClient> audio_client(client);
+  ComPtr<IAudioClient2> audio_client2;
+  BOOL flag = FALSE;
+
+  HRESULT hr = audio_client.As(&audio_client2);
+  if (FAILED(hr))
+    return hr;
+
+  hr = audio_client2->IsOffloadCapable(AudioCategory_Media, &flag);
+  DVLOG(1) << "IsOffloadCapable() returned: 0x" << std::hex << hr << " flag=" << flag;
+  if (FAILED(hr))
+    return hr;
+
+  *offload_capable = flag;
+  return S_OK;
+}
+
+HRESULT GetOffloadCapable(IAudioClient* client, bool* offload_capable) {
+  DVLOG(1) << "Fetch offload capability switch=" << base::FeatureList::IsEnabled(kAudioOffload) << " mode=" << CoreAudioUtil::GetShareMode();
+  if (!base::FeatureList::IsEnabled(kAudioOffload))
+    return S_OK;
+
+  if (CoreAudioUtil::GetShareMode() == AUDCLNT_SHAREMODE_EXCLUSIVE)
+    return E_INVALIDARG;
+
+  return IsOffloadCapable(client, offload_capable);
+}
+
+HRESULT GetOffloadBufferParameters(IAudioClient *client,
+                                   const WAVEFORMATEX* format,
+                                   AudioParameters::HardwareCapabilities* caps) {
+  ComPtr<IAudioClient> audio_client(client);
+  ComPtr<IAudioClient2> audio_client_2;
+  REFERENCE_TIME min_duration = 0;
+  REFERENCE_TIME max_duration = 0;
+
+  HRESULT hr = audio_client.As(&audio_client_2);
+  if (FAILED(hr))
+    return hr;
+
+  // GetBufferSizeLimits() returns AUDCLNT_E_OFFLOAD_MODE_ONLY (0x88890024)
+  // if the client is not in offload mode.
+  hr = CoreAudioUtil::SetOffloadForClient(client, true);
+  if (FAILED(hr))
+    return hr;
+
+  hr = audio_client_2->GetBufferSizeLimits(format, true, &min_duration, &max_duration);
+  DVLOG(1) << "GetBufferSizeLimits() returned: 0x" << std::hex << hr;
+  if (FAILED(hr))
+    return hr;
+
+  DVLOG(1) << "Offload buffer duration, min: " << min_duration << " max: " << max_duration;
+  CoreAudioUtil::SetOffloadForClient(client, false);
+
+  base::TimeDelta time;
+  int sample_rate = format->nSamplesPerSec;
+
+  // With success guaranteed, initialize the parameters.
+  time = CoreAudioUtil::ReferenceTimeToTimeDelta(min_duration);
+  caps->min_frames_per_buffer = AudioTimestampHelper::TimeToFrames(time, sample_rate);
+  DVLOG(1) << "Offload buffer frames, min time: " << time << " frames: " << caps->min_frames_per_buffer;
+  time = CoreAudioUtil::ReferenceTimeToTimeDelta(max_duration);
+  caps->max_frames_per_buffer = AudioTimestampHelper::TimeToFrames(time, sample_rate);
+  DVLOG(1) << "Offload buffer frames, max time: " << time << " frames: " << caps->max_frames_per_buffer;
+  time = CoreAudioUtil::ReferenceTimeToTimeDelta(GetOffloadBufferTime());
+  caps->default_frames_per_buffer = AudioTimestampHelper::TimeToFrames(time, sample_rate);
+  DVLOG(1) << "Offload buffer defaults, time: " << time << " frames: " << caps->default_frames_per_buffer;
+
+  return S_OK;
+}
+
+HRESULT GetOffloadParameters(IAudioClient* client, bool is_output_device,
+                             const WAVEFORMATEX* format,
+                             AudioParameters::HardwareCapabilities* caps) {
+  bool offload_capable = false;
+
+  HRESULT hr = GetOffloadCapable(client, &offload_capable);
+  if (FAILED(hr))
+    return hr;
+
+  if (offload_capable) {
+    hr = GetOffloadBufferParameters(client, format, caps);
+    if (FAILED(hr))
+      return hr;
+  }
+
+  return S_OK;
+}
+
 HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
                                             bool is_output_device,
                                             AudioParameters* params) {
@@ -517,12 +612,16 @@ HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
     return hr;
   CoreAudioUtil::WaveFormatWrapper format(&mix_format);
 
-  int min_frames_per_buffer = 0;
-  int max_frames_per_buffer = 0;
-  int default_frames_per_buffer = 0;
+  AudioParameters::HardwareCapabilities hw_caps;
+  AudioParameters::HardwareCapabilities offload_caps;
   int frames_per_buffer = 0;
-
   const int sample_rate = format->nSamplesPerSec;
+
+  // Check if the client is offload capable and initialize the capabilities.
+  // At the same offload is optional, so do not stop here if the getter fails.
+  hr = GetOffloadParameters(client, is_output_device, &mix_format.Format, &offload_caps);
+  if (FAILED(hr))
+    DVLOG(1) << "GetOffloadParameters() returned: 0x" << std::hex << hr;
 
   // Try to obtain an IAudioClient3 interface from the IAudioClient object.
   // Use ComPtr::As for doing QueryInterface calls on COM objects.
@@ -539,9 +638,9 @@ HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
         &min_period_frames, &max_period_frames);
 
     if (SUCCEEDED(hr)) {
-      min_frames_per_buffer = min_period_frames;
-      max_frames_per_buffer = max_period_frames;
-      default_frames_per_buffer = default_period_frames;
+      hw_caps.min_frames_per_buffer = min_period_frames;
+      hw_caps.max_frames_per_buffer = max_period_frames;
+      hw_caps.default_frames_per_buffer = default_period_frames;
       frames_per_buffer = default_period_frames;
     }
   }
@@ -593,10 +692,7 @@ HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
 
   AudioParameters audio_params(
       AudioParameters::AUDIO_PCM_LOW_LATENCY, {channel_layout, channels},
-      sample_rate, frames_per_buffer,
-      AudioParameters::HardwareCapabilities(
-          min_frames_per_buffer, max_frames_per_buffer,
-          default_frames_per_buffer));
+      sample_rate, frames_per_buffer, hw_caps, offload_caps);
 
   DVLOG(1) << audio_params.AsHumanReadableString();
   DCHECK(audio_params.IsValid());
@@ -1179,6 +1275,24 @@ ChannelConfig CoreAudioUtil::GetChannelConfig(const std::string& device_id,
   }
 
   return static_cast<ChannelConfig>(format.GetExtensible()->dwChannelMask);
+}
+
+HRESULT CoreAudioUtil::SetOffloadForClient(IAudioClient* client, bool is_offload) {
+  ComPtr<IAudioClient> audio_client(client);
+  ComPtr<IAudioClient2> audio_client2;
+
+  HRESULT hr = audio_client.As(&audio_client2);
+  if (FAILED(hr))
+    return hr;
+
+  AudioClientProperties client_properties = {0};
+  client_properties.cbSize = sizeof(AudioClientProperties);
+  client_properties.bIsOffload = is_offload;
+  client_properties.eCategory = AudioCategory_Media;
+
+  hr = audio_client2->SetClientProperties(&client_properties);
+  DVLOG(1) << "SetClientProperties() returned: 0x" << std::hex << hr << " is_offload=" << is_offload;
+  return hr;
 }
 
 HRESULT CoreAudioUtil::SharedModeInitialize(IAudioClient* client,

@@ -495,7 +495,7 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kAllowMediaFoundationFrameServerMode);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kApplicationAudioCaptureWin);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioDuckingWin);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioOffload);
-MEDIA_EXPORT extern const base::FeatureParam<double> kAudioOffloadBufferTimeMs;
+MEDIA_EXPORT extern const base::FeatureParam<size_t> kAudioOffloadBufferTimeMs;
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kCastStreamingWinHardwareH264);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D11Vp9kSVCHWDecoding);
 // Enables D3D12 video encode accelerator taking shared image as input.

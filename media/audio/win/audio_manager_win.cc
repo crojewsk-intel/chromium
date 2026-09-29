@@ -341,9 +341,8 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
   int sample_rate = 48000;
   int buffer_size = kFallbackBufferSize;
   int effects = AudioParameters::NO_EFFECTS;
-  int min_buffer_size = 0;
-  int max_buffer_size = 0;
-  int default_buffer_size = 0;
+  AudioParameters::HardwareCapabilities hardware_capabilities;
+  AudioParameters::HardwareCapabilities offload_capabilities;
 
   if (cmd_line->HasSwitch(switches::kEnableExclusiveAudio)) {
     // TODO(rtoy): tune these values for best possible WebAudio
@@ -380,12 +379,10 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     sample_rate = params.sample_rate();
     effects = params.effects();
 
-    AudioParameters::HardwareCapabilities hardware_capabilities =
-        params.hardware_capabilities().value_or(
+    hardware_capabilities = params.hardware_capabilities().value_or(
             AudioParameters::HardwareCapabilities());
-    min_buffer_size = hardware_capabilities.min_frames_per_buffer;
-    max_buffer_size = hardware_capabilities.max_frames_per_buffer;
-    default_buffer_size = hardware_capabilities.default_frames_per_buffer;
+    offload_capabilities = params.offload_capabilities().value_or(
+            AudioParameters::HardwareCapabilities());
   }
 
   if (input_params.IsValid()) {
@@ -421,9 +418,12 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     effects |= input_params.effects();
 
     // Allow non-default buffer sizes if we have a valid min and max.
-    if (min_buffer_size > 0 && max_buffer_size > 0) {
+    if (hardware_capabilities.min_frames_per_buffer > 0 &&
+        hardware_capabilities.max_frames_per_buffer > 0) {
       buffer_size = std::clamp(input_params.frames_per_buffer(),
-                               min_buffer_size, max_buffer_size);
+          std::clamp(hardware_capabilities.max_frames_per_buffer,
+                     hardware_capabilities.min_frames_per_buffer),
+                     hardware_capabilities.max_frames_per_buffer);
     }
   }
 
@@ -431,8 +431,6 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
   if (user_buffer_size)
     buffer_size = user_buffer_size;
 
-  AudioParameters::HardwareCapabilities hardware_capabilities(
-      min_buffer_size, max_buffer_size, default_buffer_size);
 #if BUILDFLAG(ENABLE_PASSTHROUGH_AUDIO_CODECS)
   hardware_capabilities.bitstream_formats = 0;
   hardware_capabilities.require_encapsulation = false;
@@ -443,7 +441,7 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
 #endif  // BUILDFLAG(ENABLE_PASSTHROUGH_AUDIO_CODECS)
   AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                          channel_layout_config, sample_rate, buffer_size,
-                         hardware_capabilities);
+                         hardware_capabilities, offload_capabilities);
   params.set_effects(effects);
   DCHECK(params.IsValid());
   return params;

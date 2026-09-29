@@ -247,6 +247,8 @@ class MEDIA_EXPORT CoreAudioUtil {
   static ChannelConfig GetChannelConfig(const std::string& device_id,
                                         EDataFlow data_flow);
 
+  static HRESULT SetOffloadForClient(IAudioClient* client, bool is_offload);
+
   // After activating an IAudioClient interface on an audio endpoint device,
   // the client must initialize it once, and only once, to initialize the audio
   // stream between the client and the device. In shared mode, the client
