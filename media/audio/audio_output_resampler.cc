@@ -138,6 +138,29 @@ AudioParameters GetFallbackOutputParams(
   fallback_params.set_frames_per_buffer(frames_per_buffer);
   return fallback_params;
 }
+
+AudioParameters GetOffloadOutputParams(const AudioParameters& original_params) {
+  AudioParameters offload_params(original_params);
+
+  offload_params.set_offload_enabled(true);
+  offload_params.set_hardware_capabilities(original_params.offload_capabilities());
+  offload_params.set_frames_per_buffer(original_params.GetOffloadFramesPerBuffer());
+
+  return offload_params;
+}
+
+// Latency of kPlayback is a software imposed limitation
+// as hardware offload works fine for both directions.
+bool AttemptAudioOffload(const AudioParameters& params) {
+  DVLOG(1) << "AttemptAudioOffload offload_capable=" << params.OffloadCapable() << " latency_tag="
+           << (int)params.latency_tag() << " is_bitstream_format=" << params.IsBitstreamFormat();
+  return params.OffloadCapable() &&
+         params.latency_tag() == AudioLatency::Type::kPlayback &&
+         params.format() == AudioParameters::AUDIO_PCM_LOW_LATENCY &&
+         !params.IsBitstreamFormat();
+}
+#elif
+bool AttemptAudioOffload(const AudioParameters& params) { return false; }
 #endif
 
 // This enum must match the numbering for
@@ -258,6 +281,10 @@ bool AudioOutputResampler::OpenStream() {
     // No open streams => no fallback has happened.
     DCHECK(original_output_params_.Equals(output_params_));
     DCHECK(callbacks_.empty());
+
+    if (AttemptAudioOffload(original_output_params_))
+      output_params_ = GetOffloadOutputParams(original_output_params_);
+
     dispatcher_ = MakeDispatcher(device_id_, output_params_);
   }
 
@@ -302,6 +329,18 @@ bool AudioOutputResampler::OpenStream() {
   // low latency path.
 #if BUILDFLAG(IS_WIN)
   base::UmaHistogramBoolean(kFallbackHistogramName, true);
+
+  // Offload is optional, fallback to standard low-latency if it fails.
+  if (output_params_.offload_enabled()) {
+    DLOG(ERROR) << "Unable to open audio device in offloaded mode.  Falling "
+                << "back to low latency audio output.";
+
+    output_params_ = original_output_params_;
+    dispatcher_ = MakeDispatcher(device_id_, output_params_);
+
+    if (dispatcher_->OpenStream())
+      return true;
+  }
 
   DLOG(ERROR) << "Unable to open audio device in low latency mode.  Falling "
               << "back to high latency audio output.";

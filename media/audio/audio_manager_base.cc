@@ -653,21 +653,26 @@ AudioOutputStream* AudioManagerBase::MakeAudioOutputStreamProxy(
   auto dispatcher_params = std::make_unique<DispatcherParams>(
       params, output_params, output_device_id);
 
-  auto it = std::ranges::find_if(
-      output_dispatchers_,
-      [&](const std::unique_ptr<DispatcherParams>& dispatcher) {
-        // We will reuse the existing dispatcher when:
-        // 1) Unified IO is not used, input_params and output_params of the
-        //    existing dispatcher are the same as the requested dispatcher.
-        // 2) Unified IO is used, input_params and output_params of the
-        // existing
-        //    dispatcher are the same as the request dispatcher.
-        return params.Equals(dispatcher->input_params) &&
-                output_params.Equals(dispatcher->output_params) &&
-                output_device_id == dispatcher->output_device_id;
-      });
-  if (it != output_dispatchers_.end()) {
-    return (*it)->dispatcher->CreateStreamProxy();
+  // Do not reuse the output dispatcher if audio offload may be requested.
+  // Their underlying audio client is configured differently to make
+  // it work with expected buffer size according to requested output
+  // param.
+  if (!output_params.offload_enabled()) {
+    auto it = std::ranges::find_if(
+        output_dispatchers_,
+        [&](const std::unique_ptr<DispatcherParams>& dispatcher) {
+          // We will reuse the existing dispatcher when:
+          // 1) Unified IO is not used, input_params and output_params of the
+          //    existing dispatcher are the same as the requested dispatcher.
+          // 2) Unified IO is used, input_params and output_params of the
+          //    existing dispatcher are the same as the requested dispatcher.
+          return params.Equals(dispatcher->input_params) &&
+                 output_params.Equals(dispatcher->output_params) &&
+                 output_device_id == dispatcher->output_device_id;
+        });
+    if (it != output_dispatchers_.end()) {
+      return (*it)->dispatcher->CreateStreamProxy();
+    }
   }
 
   const base::TimeDelta kCloseDelay = base::Seconds(kStreamCloseDelaySeconds);
