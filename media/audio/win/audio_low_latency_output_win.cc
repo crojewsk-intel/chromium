@@ -417,7 +417,7 @@ bool WASAPIAudioOutputStream::Open() {
     hr = CoreAudioUtil::SharedModeInitialize(
         audio_client.Get(), &format_, audio_samples_render_event_.Get(),
         requested_iaudioclient3_buffer_size_, &endpoint_buffer_size_frames_,
-        communications_device ? &kCommunicationsSessionId : nullptr);
+        communications_device ? &kCommunicationsSessionId : nullptr, params_.offload_enabled());
     if (FAILED(hr)) {
       RecordAudioFailure(kOpenFailureHistogram, hr);
       SendLogMessage(base::StrCat(
@@ -442,9 +442,27 @@ bool WASAPIAudioOutputStream::Open() {
     }
 
     UINT32 preferred_frames_per_buffer = 0;
-    preferred_frames_per_buffer = AudioTimestampHelper::TimeToFrames(
-        CoreAudioUtil::ReferenceTimeToTimeDelta(device_period),
-        format_.Format.nSamplesPerSec);
+    if (params_.offload_enabled()) {
+      hr = audio_client->GetBufferSize(&preferred_frames_per_buffer);
+
+      // TODO(crbug.com/348468130) : Consider reinitializing `audio_bus_` and
+      // handling mismatch of `packet_size_frames_` and
+      // `preferred_frames_per_buffer`.
+      // If `packet_size_frames_` doesn't match the preferred size, fallback to
+      // not offloading. This might happen after a device change.
+      if (packet_size_frames_ != preferred_frames_per_buffer) {
+        SendLogMessage(base::StrCat(
+            {__func__,
+             " => (INFO: Requested buffer size in frames mismatch. "
+             "Disable audio offload for the stream."}));
+        // Return here to allow falling back to non-offload mode.
+        return false;
+      }
+    } else {
+      preferred_frames_per_buffer = AudioTimestampHelper::TimeToFrames(
+          CoreAudioUtil::ReferenceTimeToTimeDelta(device_period),
+          format_.Format.nSamplesPerSec);
+    }
 
     SendLogMessage(base::StringPrintf(
         "%s => (preferred_frames_per_buffer=[%d audio frames])", __func__,
@@ -698,6 +716,9 @@ void WASAPIAudioOutputStream::Close() {
   // It is valid to call Close() before calling open or Start().
   // It is also valid to call Close() after Start() has been called.
   Stop();
+
+  if (params_.offload_enabled())
+    CoreAudioUtil::SetOffloadForClient(audio_client_.Get(), false);
 
   // Inform the audio manager that we have been closed. This will cause our
   // destruction.
@@ -1050,9 +1071,14 @@ HRESULT WASAPIAudioOutputStream::RenderAudioFromSource(
     auto dest_span = UNSAFE_BUFFERS(
         base::span<uint8_t>(audio_data, static_cast<size_t>(num_filled_bytes)));
 
-    // We skip clipping since that occurs at the shared memory boundary.
-    audio_bus_->ToInterleavedBytesPartial<Float32SampleTypeTraitsNoClip>(
-        0, dest_span);
+    if (params_.offload_enabled()) {
+      audio_bus_->ToInterleavedBytesPartial<SignedInt16SampleTypeTraits>(
+          0, dest_span);
+    } else {
+      // We skip clipping since that occurs at the shared memory boundary.
+      audio_bus_->ToInterleavedBytesPartial<Float32SampleTypeTraitsNoClip>(
+          0, dest_span);
+    }
 
     peak_detector_->FindPeak(audio_bus_.get());
 
@@ -1248,9 +1274,16 @@ void WASAPIAudioOutputStream::SetupWaveFormat() {
   // and high precision data can be supported.
   // Begin with the WAVEFORMATEX structure that specifies the basic format.
   WAVEFORMATEX* format = &format_.Format;
-  format->wBitsPerSample = sizeof(float) * 8;
-  format_.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-  packet_size_bytes_ = params_.GetBytesPerBuffer(kSampleFormatF32);
+  // Override for audio offload.
+  if (params_.offload_enabled()) {
+    format_.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+    format->wBitsPerSample = 16;
+    packet_size_bytes_ = params_.GetBytesPerBuffer(kSampleFormatS16);
+  } else {
+    format->wBitsPerSample = sizeof(float) * 8;
+    format_.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+    packet_size_bytes_ = params_.GetBytesPerBuffer(kSampleFormatF32);
+  }
   format->wFormatTag = WAVE_FORMAT_EXTENSIBLE;
   format->nChannels = params_.channels();
   format->nSamplesPerSec = params_.sample_rate();
