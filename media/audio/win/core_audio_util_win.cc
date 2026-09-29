@@ -1295,6 +1295,50 @@ HRESULT CoreAudioUtil::SetOffloadForClient(IAudioClient* client, bool is_offload
   return hr;
 }
 
+HRESULT CoreAudioUtil::InitializeSharedClient2(IAudioClient* client,
+                                               DWORD stream_flags,
+                                               const WaveFormatWrapper format,
+                                               const GUID* session_guid) {
+  const AUDCLNT_SHAREMODE mode = AUDCLNT_SHAREMODE_SHARED;
+  HRESULT hr;
+
+  hr = SetOffloadForClient(client, true);
+  if (FAILED(hr))
+    return hr;
+
+  // Typically GetBufferSize() must be called after successfully
+  // initialization. AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED is the only
+  // case we allow with an initialization failure.
+  hr = client->Initialize(mode, stream_flags, GetOffloadBufferTime(), 0, format, session_guid);
+  DVLOG(1) << "Initialize() returned: 0x" << std::hex << hr;
+  if (SUCCEEDED(hr))
+    return hr;
+
+  if (hr != AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+    SetOffloadForClient(client, false);
+    return hr;
+  }
+
+  uint32_t buffer_size_in_frames = 0;
+
+  hr = client->GetBufferSize(&buffer_size_in_frames);
+  DVLOG(1) << "GetBufferSize() returned: 0x" << std::hex << hr << " buffer_size_in_frames=" << buffer_size_in_frames;
+  if (FAILED(hr)) {
+    SetOffloadForClient(client, false);
+    return hr;
+  }
+
+  REFERENCE_TIME time_ns = BufferSizeInFramesToTimeDelta(buffer_size_in_frames,
+                                                         format->nAvgBytesPerSec,
+                                                         format->nBlockAlign);
+  hr = client->Initialize(mode, stream_flags, time_ns, 0, format, session_guid);
+  DVLOG(1) << "Initialize() #2 returned: 0x" << std::hex << hr;
+  if (FAILED(hr))
+    SetOffloadForClient(client, false);
+
+  return hr;
+}
+
 HRESULT CoreAudioUtil::InitializeSharedClient(IAudioClient* client,
                                               DWORD stream_flags,
                                               const WaveFormatWrapper format,
@@ -1369,8 +1413,11 @@ HRESULT CoreAudioUtil::SharedModeInitialize(IAudioClient* client,
 
   HRESULT hr;
 
-  hr = InitializeSharedClient(client, stream_flags, format, requested_buffer_size,
-                              session_guid);
+  if (is_offload_stream)
+    hr = InitializeSharedClient2(client, stream_flags, format, session_guid);
+  else
+    hr = InitializeSharedClient(client, stream_flags, format, requested_buffer_size,
+                                session_guid);
   if (FAILED(hr))
     return hr;
 

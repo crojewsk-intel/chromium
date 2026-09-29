@@ -249,6 +249,11 @@ class MEDIA_EXPORT CoreAudioUtil {
 
   static HRESULT SetOffloadForClient(IAudioClient* client, bool is_offload);
 
+  static HRESULT InitializeSharedClient2(IAudioClient* client,
+                                         DWORD stream_flags,
+                                         const WaveFormatWrapper format,
+                                         const GUID* session_guid);
+
   static HRESULT InitializeSharedClient(IAudioClient* client,
                                         DWORD stream_flags,
                                         const WaveFormatWrapper format,
