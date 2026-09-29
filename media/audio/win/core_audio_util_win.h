@@ -234,8 +234,7 @@ class MEDIA_EXPORT CoreAudioUtil {
   // preferred settings for an exclusive mode stream.
   static HRESULT GetPreferredAudioParameters(const std::string& device_id,
                                              bool is_output_device,
-                                             AudioParameters* params,
-                                             bool is_offload_stream = false);
+                                             AudioParameters* params);
 
   // Retrieves an integer mask which corresponds to the channel layout the
   // audio engine uses for its internal processing/mixing of shared-mode
@@ -267,7 +266,7 @@ class MEDIA_EXPORT CoreAudioUtil {
                                       uint32_t requested_buffer_size,
                                       uint32_t* endpoint_buffer_size,
                                       const GUID* session_guid,
-                                      bool enable_audio_offload = false);
+                                      bool is_offload_stream = false);
 
   // Returns true if the client has been initialized and false otherwise.
   static bool IsClientInitialized(IAudioClient* client);
@@ -310,16 +309,6 @@ class MEDIA_EXPORT CoreAudioUtil {
   static HRESULT FillRenderEndpointBufferWithSilence(
       IAudioClient* client,
       IAudioRenderClient* render_client);
-
-  // Enable audio offload on the client if supported. Returning true only when
-  // the client supports audio offload, and at the same time the offload pin
-  // for client's output is selected. For more details of audio offload, refer
-  // to:
-  // https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/hardware-offloaded-audio-processing
-  static bool EnableOffloadForClient(IAudioClient* client);
-
-  // Check if audio offload can be enabled for client.
-  static bool IsAudioOffloadSupported(IAudioClient* client);
 
   // Set the category to AudioCategory_Communications which is intended for
   // real-time communications, such as VoIP or chat clients. Also needed to

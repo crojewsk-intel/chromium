@@ -10,7 +10,6 @@
 #include "media/base/audio_parameters.h"
 #include "media/base/audio_point.h"
 #include "media/base/limits.h"
-#include "media/base/media_switches.h"
 
 namespace mojo {
 
@@ -125,13 +124,6 @@ bool StructTraits<media::mojom::AudioParametersHardwareCapabilitiesDataView,
   output->default_frames_per_buffer = input.default_frames_per_buffer();
   output->bitstream_formats = input.bitstream_formats();
   output->require_encapsulation = input.require_encapsulation();
-  output->require_audio_offload = input.require_audio_offload();
-#if BUILDFLAG(IS_WIN)
-  if (output->require_audio_offload &&
-      !base::FeatureList::IsEnabled(media::kAudioOffload)) {
-    return false;
-  }
-#endif
   return true;
 }
 

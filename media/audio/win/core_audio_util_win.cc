@@ -68,15 +68,6 @@ REFERENCE_TIME BufferSizeInFramesToTimeDelta(uint32_t frames,
                           0.5f);
 }
 
-// Return the requested offload buffer time in 100ns units.
-double GetOffloadBufferTimeIn100Ns() {
-  if (base::FeatureList::IsEnabled(kAudioOffload)) {
-    return media::kAudioOffloadBufferTimeMs.Get() * 10000;
-  }
-
-  return 500000;  // 50ms
-}
-
 void LogVoiceProcessingEffectsHistogram(int value) {
   base::UmaHistogramSparse("Media.Audio.Capture.Win.VoiceProcessingEffects",
                            value);
@@ -519,8 +510,7 @@ ComPtr<IAudioClient3> CreateClientInternal3(IMMDevice* audio_device,
 
 HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
                                             bool is_output_device,
-                                            AudioParameters* params,
-                                            bool is_offload_stream) {
+                                            AudioParameters* params) {
   WAVEFORMATEXTENSIBLE mix_format;
   HRESULT hr = CoreAudioUtil::GetSharedModeMixFormat(client, &mix_format);
   if (FAILED(hr))
@@ -533,69 +523,48 @@ HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
   int frames_per_buffer = 0;
 
   const int sample_rate = format->nSamplesPerSec;
-  if (is_offload_stream) {
-    frames_per_buffer = AudioTimestampHelper::TimeToFrames(
-        CoreAudioUtil::ReferenceTimeToTimeDelta(GetOffloadBufferTimeIn100Ns()),
-        sample_rate);
-    ComPtr<IAudioClient> audio_client(client);
-    ComPtr<IAudioClient2> audio_client_2;
-    hr = audio_client.As(&audio_client_2);
+
+  // Try to obtain an IAudioClient3 interface from the IAudioClient object.
+  // Use ComPtr::As for doing QueryInterface calls on COM objects.
+  ComPtr<IAudioClient> audio_client(client);
+  ComPtr<IAudioClient3> audio_client_3;
+  hr = audio_client.As(&audio_client_3);
+  if (SUCCEEDED(hr)) {
+    UINT32 default_period_frames = 0;
+    UINT32 fundamental_period_frames = 0;
+    UINT32 min_period_frames = 0;
+    UINT32 max_period_frames = 0;
+    hr = audio_client_3->GetSharedModeEnginePeriod(
+        format.get(), &default_period_frames, &fundamental_period_frames,
+        &min_period_frames, &max_period_frames);
+
     if (SUCCEEDED(hr)) {
-      REFERENCE_TIME min_buffer_duration = 0;
-      REFERENCE_TIME max_buffer_duration = 0;
-      audio_client_2->GetBufferSizeLimits(
-          &mix_format.Format, true, &min_buffer_duration, &max_buffer_duration);
-
-      min_frames_per_buffer = AudioTimestampHelper::TimeToFrames(
-          CoreAudioUtil::ReferenceTimeToTimeDelta(min_buffer_duration),
-          sample_rate);
-      max_frames_per_buffer = AudioTimestampHelper::TimeToFrames(
-          CoreAudioUtil::ReferenceTimeToTimeDelta(max_buffer_duration),
-          sample_rate);
+      min_frames_per_buffer = min_period_frames;
+      max_frames_per_buffer = max_period_frames;
+      default_frames_per_buffer = default_period_frames;
+      frames_per_buffer = default_period_frames;
     }
-  } else {
-    // Try to obtain an IAudioClient3 interface from the IAudioClient object.
-    // Use ComPtr::As for doing QueryInterface calls on COM objects.
-    ComPtr<IAudioClient> audio_client(client);
-    ComPtr<IAudioClient3> audio_client_3;
-    hr = audio_client.As(&audio_client_3);
-    if (SUCCEEDED(hr)) {
-      UINT32 default_period_frames = 0;
-      UINT32 fundamental_period_frames = 0;
-      UINT32 min_period_frames = 0;
-      UINT32 max_period_frames = 0;
-      hr = audio_client_3->GetSharedModeEnginePeriod(
-          format.get(), &default_period_frames, &fundamental_period_frames,
-          &min_period_frames, &max_period_frames);
+  }
 
-      if (SUCCEEDED(hr)) {
-        min_frames_per_buffer = min_period_frames;
-        max_frames_per_buffer = max_period_frames;
-        default_frames_per_buffer = default_period_frames;
-        frames_per_buffer = default_period_frames;
-      }
-    }
-
-    // If the call to GetSharedModeEnginePeriod() fails we fall back to
-    // GetDevicePeriod().
+  // If the call to GetSharedModeEnginePeriod() fails we fall back to
+  // GetDevicePeriod().
+  if (FAILED(hr)) {
+    REFERENCE_TIME default_period = 0;
+    hr = CoreAudioUtil::GetDevicePeriod(client, AUDCLNT_SHAREMODE_SHARED,
+                                        &default_period);
     if (FAILED(hr)) {
-      REFERENCE_TIME default_period = 0;
-      hr = CoreAudioUtil::GetDevicePeriod(client, AUDCLNT_SHAREMODE_SHARED,
-                                          &default_period);
-      if (FAILED(hr)) {
-        return hr;
-      }
-
-      // We are using the native device period to derive the smallest possible
-      // buffer size in shared mode. Note that the actual endpoint buffer will
-      // be larger than this size but it will be possible to fill it up in two
-      // calls.
-      frames_per_buffer = static_cast<int>(
-          sample_rate * CoreAudioUtil::ReferenceTimeToTimeDelta(default_period)
-                            .InSecondsF() +
-          0.5);
-      DVLOG(1) << "IAudioClient => frames_per_buffer: " << frames_per_buffer;
+      return hr;
     }
+
+    // We are using the native device period to derive the smallest possible
+    // buffer size in shared mode. Note that the actual endpoint buffer will
+    // be larger than this size but it will be possible to fill it up in two
+    // calls.
+    frames_per_buffer = static_cast<int>(
+        sample_rate * CoreAudioUtil::ReferenceTimeToTimeDelta(default_period)
+                          .InSecondsF() +
+        0.5);
+    DVLOG(1) << "IAudioClient => frames_per_buffer: " << frames_per_buffer;
   }
 
   // Retrieve the current channel configuration (e.g. CHANNEL_LAYOUT_STEREO).
@@ -627,7 +596,7 @@ HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
       sample_rate, frames_per_buffer,
       AudioParameters::HardwareCapabilities(
           min_frames_per_buffer, max_frames_per_buffer,
-          default_frames_per_buffer, is_offload_stream));
+          default_frames_per_buffer));
 
   DVLOG(1) << audio_params.AsHumanReadableString();
   DCHECK(audio_params.IsValid());
@@ -1116,8 +1085,7 @@ HRESULT CoreAudioUtil::GetDevicePeriod(IAudioClient* client,
 
 HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
                                                    bool is_output_device,
-                                                   AudioParameters* params,
-                                                   bool is_offload_stream) {
+                                                   AudioParameters* params) {
   // Loopback capture audio streams must be input streams. If an output device
   // is requested for a loopback device, the default output device will be used
   // instead. See https://crbug.com/956526 for more details.
@@ -1141,11 +1109,7 @@ HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
     return hr;
   }
 
-  bool attempt_audio_offload =
-      is_offload_stream && EnableOffloadForClient(client.Get());
-
-  hr = GetPreferredAudioParametersInternal(client.Get(), is_output_device,
-                                           params, attempt_audio_offload);
+  hr = GetPreferredAudioParametersInternal(client.Get(), is_output_device, params);
   if (FAILED(hr) || is_output_device || !params->IsValid()) {
     return hr;
   }
@@ -1247,35 +1211,7 @@ HRESULT CoreAudioUtil::SharedModeInitialize(IAudioClient* client,
 
   HRESULT hr;
 
-  if (is_offload_stream) {
-    {
-      TRACE_EVENT0("audio", "IAudioClient::Initialize_Offload");
-      hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags,
-                              GetOffloadBufferTimeIn100Ns(), 0, format,
-                              session_guid);
-    }
-    // Typically GetBufferSize() must be called after successfully
-    // initialization. AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED is the only case we
-    // allow with an initialization failure.
-    if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
-      uint32_t buffer_size_in_frames = 0;
-      {
-        TRACE_EVENT0("audio", "IAudioClient::GetBufferSize_Offload");
-        hr = client->GetBufferSize(&buffer_size_in_frames);
-      }
-      if (SUCCEEDED(hr)) {
-        REFERENCE_TIME buffer_duration_in_ns = BufferSizeInFramesToTimeDelta(
-            buffer_size_in_frames, format->nAvgBytesPerSec,
-            format->nBlockAlign);
-        {
-          TRACE_EVENT0("audio", "IAudioClient::Initialize_OffloadAligned");
-          hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags,
-                                  buffer_duration_in_ns, 0, format,
-                                  session_guid);
-        }
-      }
-    }
-  } else if (requested_buffer_size > 0) {
+  if (requested_buffer_size > 0) {
     // Try to obtain an IAudioClient3 interface from the IAudioClient object.
     // Use ComPtr::As for doing QueryInterface calls on COM objects.
     ComPtr<IAudioClient> audio_client(client);
@@ -1441,55 +1377,6 @@ HRESULT CoreAudioUtil::FillRenderEndpointBufferWithSilence(
   }
 
   return S_OK;
-}
-
-// static
-bool CoreAudioUtil::EnableOffloadForClient(IAudioClient* client) {
-  ComPtr<IAudioClient> audio_client(client);
-  ComPtr<IAudioClient2> audio_client2;
-
-  if (!CoreAudioUtil::IsAudioOffloadSupported(audio_client.Get())) {
-    return false;
-  }
-  HRESULT hr = audio_client.As(&audio_client2);
-  if (SUCCEEDED(hr)) {
-    AudioClientProperties client_properties = {0};
-    client_properties.cbSize = sizeof(AudioClientProperties);
-    client_properties.bIsOffload = true;
-    client_properties.eCategory = AudioCategory_Media;
-
-    hr = audio_client2->SetClientProperties(&client_properties);
-    if (SUCCEEDED(hr)) {
-      DVLOG(1) << "Enabled audio offload on the client.";
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// static
-bool CoreAudioUtil::IsAudioOffloadSupported(IAudioClient* client) {
-  if (!base::FeatureList::IsEnabled(kAudioOffload)) {
-    return false;
-  } else if (!client) {
-    // If no client is specified, we can't determine if offload is supported,
-    // thus allow audio offload to be attempted, the real capability will be
-    // checked when the audio client is created.
-    return true;
-  }
-
-  ComPtr<IAudioClient> audio_client(client);
-  ComPtr<IAudioClient2> audio_client2;
-  BOOL is_offloadable = FALSE;
-
-  HRESULT hr = audio_client.As(&audio_client2);
-  if (SUCCEEDED(hr)) {
-    hr = audio_client2->IsOffloadCapable(AudioCategory_Media, &is_offloadable);
-    return (hr == S_OK && (is_offloadable == TRUE));
-  }
-
-  return false;
 }
 
 // static

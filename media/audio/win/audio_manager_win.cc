@@ -344,7 +344,6 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
   int min_buffer_size = 0;
   int max_buffer_size = 0;
   int default_buffer_size = 0;
-  bool attempt_audio_offload = CoreAudioUtil::IsAudioOffloadSupported(nullptr);
 
   if (cmd_line->HasSwitch(switches::kEnableExclusiveAudio)) {
     // TODO(rtoy): tune these values for best possible WebAudio
@@ -362,7 +361,7 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     HRESULT hr = CoreAudioUtil::GetPreferredAudioParameters(
         output_device_id.empty() ? GetDefaultOutputDeviceID()
                                  : output_device_id,
-        true, &params, attempt_audio_offload);
+        true, &params);
     if (FAILED(hr)) {
       // This can happen when CoreAudio isn't supported or available
       // (e.g. certain installations of Windows Server 2008 R2).
@@ -433,8 +432,7 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     buffer_size = user_buffer_size;
 
   AudioParameters::HardwareCapabilities hardware_capabilities(
-      min_buffer_size, max_buffer_size, default_buffer_size,
-      attempt_audio_offload);
+      min_buffer_size, max_buffer_size, default_buffer_size);
 #if BUILDFLAG(ENABLE_PASSTHROUGH_AUDIO_CODECS)
   hardware_capabilities.bitstream_formats = 0;
   hardware_capabilities.require_encapsulation = false;

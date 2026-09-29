@@ -230,12 +230,10 @@ class MEDIA_EXPORT AudioParameters {
   struct HardwareCapabilities {
     constexpr HardwareCapabilities(int min_frames_per_buffer,
                                    int max_frames_per_buffer,
-                                   int default_frames_per_buffer,
-                                   bool require_offload)
+                                   int default_frames_per_buffer)
         : min_frames_per_buffer(min_frames_per_buffer),
           max_frames_per_buffer(max_frames_per_buffer),
-          default_frames_per_buffer(default_frames_per_buffer),
-          require_audio_offload(require_offload) {}
+          default_frames_per_buffer(default_frames_per_buffer) {}
     constexpr HardwareCapabilities(int min_frames_per_buffer,
                                    int max_frames_per_buffer)
         : min_frames_per_buffer(min_frames_per_buffer),
@@ -263,8 +261,6 @@ class MEDIA_EXPORT AudioParameters {
     // Bitstream will need to be encapsulated in IEC61937 to be
     // passed through to the audio hardware.
     bool require_encapsulation = false;
-    // Require audio processing offload.
-    bool require_audio_offload = false;
     bool operator==(const HardwareCapabilities& other) const = default;
   };
 
@@ -321,9 +317,6 @@ class MEDIA_EXPORT AudioParameters {
   bool IsFormatSupportedByHardware(Format format) const;
 
   bool RequireEncapsulation() const;
-
-  // Return true if offload is requested.
-  bool RequireOffload() const;
 
   void set_format(Format format) { format_ = format; }
   Format format() const { return format_; }

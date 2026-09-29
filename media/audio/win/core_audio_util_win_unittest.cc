@@ -416,8 +416,7 @@ TEST_F(CoreAudioUtilWinTest, GetPreferredAudioParameters) {
         feature_list.InitAndEnableFeature(
             media::kEnforceSystemEchoCancellation);
         EXPECT_HRESULT_SUCCEEDED(CoreAudioUtil::GetPreferredAudioParameters(
-            AudioDeviceDescription::kDefaultDeviceId, is_output_device, &params,
-            false /*is_offload_stream*/));
+            AudioDeviceDescription::kDefaultDeviceId, is_output_device, &params));
         EXPECT_TRUE(params.IsValid());
         // If GetPreferredAudioParameters() runs we know that at least one
         // sample is created since, even if the method fails or if the device
@@ -439,8 +438,7 @@ TEST_F(CoreAudioUtilWinTest, GetPreferredAudioParameters) {
             media::kEnforceSystemEchoCancellation);
         base::HistogramTester histogram_tester;
         EXPECT_HRESULT_SUCCEEDED(CoreAudioUtil::GetPreferredAudioParameters(
-            AudioDeviceDescription::kDefaultDeviceId, is_output_device, &params,
-            false /*is_offload_stream*/));
+            AudioDeviceDescription::kDefaultDeviceId, is_output_device, &params));
         EXPECT_TRUE(params.IsValid());
         histogram_tester.ExpectTotalCount(
             "Media.Audio.Capture.Win.VoiceProcessingEffects", 0);

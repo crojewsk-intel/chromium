@@ -350,8 +350,6 @@ class MEDIA_EXPORT WASAPIAudioOutputStream
 
   bool device_changed_ = false;
 
-  bool enable_audio_offload_ = false;
-
   // Generates Windows audio session events for `session_listener_` to handle.
   Microsoft::WRL::ComPtr<IAudioSessionControl> audio_session_control_;
   Microsoft::WRL::ComPtr<AudioSessionEventListener> session_listener_;

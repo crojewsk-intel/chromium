@@ -41,7 +41,6 @@ struct AudioParametersHardwareCapabilities {
   int32 default_frames_per_buffer;
   int32 bitstream_formats;
   bool require_encapsulation;
-  bool require_audio_offload;
 };
 
 struct AudioParameters {

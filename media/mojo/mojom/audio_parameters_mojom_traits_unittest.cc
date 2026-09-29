@@ -24,7 +24,7 @@ TEST(AudioParametersStructTraitsTest, NormalRoundTrip) {
 
   AudioParameters::HardwareCapabilities hardware_capabilities(
       /*min_frames_per_buffer=*/128, /*max_frames_per_buffer=*/1024,
-      /*default_frames_per_buffer=*/512, /*require_offload=*/false);
+      /*default_frames_per_buffer=*/512);
   hardware_capabilities.require_encapsulation = true;
   input.set_hardware_capabilities(hardware_capabilities);
 

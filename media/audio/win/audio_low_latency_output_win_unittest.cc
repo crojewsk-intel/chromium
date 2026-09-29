@@ -197,7 +197,6 @@ class AudioOutputStreamWrapper {
     sample_rate_ = sample_rate;
     samples_per_packet_ = samples_per_packet;
     AudioParameters::HardwareCapabilities hardware_cap(0, true);
-    hardware_cap.require_audio_offload = true;
     hardware_capabilities_ = hardware_cap;
 
     return CreateOutputStream();

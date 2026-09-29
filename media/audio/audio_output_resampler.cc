@@ -27,9 +27,6 @@
 #include "media/audio/audio_output_dispatcher_impl.h"
 #include "media/audio/audio_output_proxy.h"
 #include "media/base/audio_bus.h"
-#if BUILDFLAG(IS_WIN)
-#include "media/audio/win/core_audio_util_win.h"
-#endif  // BUILDFLAG(IS_WIN)
 #include "media/base/audio_converter.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/limits.h"
@@ -125,7 +122,7 @@ static void RecordStats(const AudioParameters& output_params) {
 #if BUILDFLAG(IS_WIN)
 // Converts low latency based |output_params| into high latency appropriate
 // output parameters in error situations.
-AudioParameters GetFallbackHighLatencyOutputParams(
+AudioParameters GetFallbackOutputParams(
     const AudioParameters& original_output_params) {
   DCHECK_EQ(original_output_params.format(),
             AudioParameters::AUDIO_PCM_LOW_LATENCY);
@@ -140,31 +137,6 @@ AudioParameters GetFallbackHighLatencyOutputParams(
   fallback_params.set_format(AudioParameters::AUDIO_PCM_LINEAR);
   fallback_params.set_frames_per_buffer(frames_per_buffer);
   return fallback_params;
-}
-
-// Get output parameter for low latency non-offload output, which is used for
-// falling back from offload mode.
-AudioParameters GetFallbackLowLatencyOutputParams(
-    const std::string& device_id,
-    const AudioParameters& original_output_params) {
-  AudioParameters output_params;
-
-  HRESULT hr = CoreAudioUtil::GetPreferredAudioParameters(
-      device_id,
-      /*is_output_device=*/true, &output_params, /*is_offload_stream=*/false);
-  if (SUCCEEDED(hr)) {
-    // Retain the channel layout and effects of the original output parameters.
-    int effects = output_params.effects();
-    effects |= original_output_params.effects();
-    output_params.set_effects(effects);
-    output_params.SetChannelLayoutConfig(
-        original_output_params.channel_layout(),
-        original_output_params.channels());
-    return output_params;
-  }
-  // If we fail to get preferred audio parameters, return empty(invalid)
-  // parameters so that fallbacking to linear mode will be attempted then.
-  return AudioParameters();
 }
 #endif
 
@@ -183,8 +155,7 @@ enum class OpenStreamResult {
   kSubsequentFail = 8,
   kSubsequentSuccess = 9,
   kFallbackToLowLatencySuccess = 10,
-  kOffloadSuccess = 11,
-  kMaxValue = kOffloadSuccess,
+  kMaxValue = kFallbackToLowLatencySuccess,
 };
 
 OpenStreamResult GetSubsequentStreamCreationResultBucket(
@@ -192,9 +163,7 @@ OpenStreamResult GetSubsequentStreamCreationResultBucket(
     bool success) {
   switch (current_params.format()) {
     case AudioParameters::AUDIO_PCM_LOW_LATENCY:
-      return success ? (current_params.RequireOffload()
-                            ? OpenStreamResult::kOffloadSuccess
-                            : OpenStreamResult::kSubsequentSuccess)
+      return success ? OpenStreamResult::kSubsequentSuccess
                      : OpenStreamResult::kSubsequentFail;
     case AudioParameters::AUDIO_PCM_LINEAR:
       return success ? OpenStreamResult::kFallbackToLinearSuccess
@@ -296,8 +265,6 @@ bool AudioOutputResampler::OpenStream() {
       "Media.FallbackToHighLatencyAudioPath2";
   constexpr char kOpenLowLatencyHistogramName[] =
       "Media.AudioOutputResampler.OpenLowLatencyStream2";
-  constexpr char kOpenLowLatencyOffloadHistogramName[] =
-      "Media.AudioOutputResampler.OpenLowLatencyStream2.Offload";
 
   if (dispatcher_->OpenStream()) {
     // Only record the UMA statistic if we didn't fallback during construction
@@ -310,9 +277,7 @@ bool AudioOutputResampler::OpenStream() {
       base::UmaHistogramEnumeration(
           kOpenLowLatencyHistogramName,
           first_stream
-              ? (original_output_params_.RequireOffload()
-                     ? OpenStreamResult::kOffloadSuccess
-                     : OpenStreamResult::kSuccess)
+              ? OpenStreamResult::kSuccess
               : GetSubsequentStreamCreationResultBucket(output_params_, true));
     }
     return true;
@@ -327,12 +292,6 @@ bool AudioOutputResampler::OpenStream() {
   // If we have successfully opened a stream previously, there's nothing more to
   // be done.
   if (!first_stream) {
-    if (original_output_params_.RequireOffload()) {
-      base::UmaHistogramEnumeration(
-          kOpenLowLatencyOffloadHistogramName,
-          GetSubsequentStreamCreationResultBucket(output_params_, false));
-      return false;
-    }
     base::UmaHistogramEnumeration(
         kOpenLowLatencyHistogramName,
         GetSubsequentStreamCreationResultBucket(output_params_, false));
@@ -340,37 +299,14 @@ bool AudioOutputResampler::OpenStream() {
   }
 
   // Only Windows has a high latency output driver that is not the same as the
-  // low latency path; or it may originally be attempted to be initialized in
-  // offload mode while rejected later due to resource limitation.
+  // low latency path.
 #if BUILDFLAG(IS_WIN)
-  // If Open() fails with offload mode, first try to fallback to non-offload
-  // mode.
-  if (original_output_params_.RequireOffload() &&
-      output_params_.RequireOffload()) {
-    DLOG(ERROR)
-        << "Unable to open device in offload mode. Attempt to fallback to "
-        << "non-offloaded low latency mode.";
-    output_params_ = GetFallbackLowLatencyOutputParams(
-        device_id_.empty() ? CoreAudioUtil::GetDefaultOutputDeviceID()
-                           : device_id_,
-        output_params_);
-    if (output_params_.IsValid()) {
-      dispatcher_ = MakeDispatcher(device_id_, output_params_);
-      if (dispatcher_->OpenStream()) {
-        base::UmaHistogramEnumeration(
-            kOpenLowLatencyHistogramName,
-            OpenStreamResult::kFallbackToLowLatencySuccess);
-        return true;
-      }
-    }
-  }
-
   base::UmaHistogramBoolean(kFallbackHistogramName, true);
 
   DLOG(ERROR) << "Unable to open audio device in low latency mode.  Falling "
               << "back to high latency audio output.";
 
-  output_params_ = GetFallbackHighLatencyOutputParams(original_output_params_);
+  output_params_ = GetFallbackOutputParams(original_output_params_);
   const std::string fallback_device_id = "";
   dispatcher_ = MakeDispatcher(fallback_device_id, output_params_);
   if (dispatcher_->OpenStream()) {

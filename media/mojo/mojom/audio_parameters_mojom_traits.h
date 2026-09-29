@@ -58,10 +58,6 @@ struct StructTraits<media::mojom::AudioParametersHardwareCapabilitiesDataView,
       const media::AudioParameters::HardwareCapabilities& input) {
     return input.require_encapsulation;
   }
-  static bool require_audio_offload(
-      const media::AudioParameters::HardwareCapabilities& input) {
-    return input.require_audio_offload;
-  }
 
   static bool Read(
       media::mojom::AudioParametersHardwareCapabilitiesDataView input,
