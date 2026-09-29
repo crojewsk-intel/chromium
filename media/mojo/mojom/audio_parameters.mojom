@@ -52,4 +52,5 @@ struct AudioParameters {
   array<gfx.mojom.Point3F> mic_positions;
   AudioLatencyType latency_tag;
   AudioParametersHardwareCapabilities? hardware_capabilities;
+  bool offload_enabled;
 };

@@ -21,6 +21,7 @@ TEST(AudioParametersStructTraitsTest, NormalRoundTrip) {
   input.set_mic_positions({Point(/*x=*/1.0f, /*y=*/2.0f, /*z=*/3.0f),
                            Point(/*x=*/4.0f, /*y=*/5.0f, /*z=*/6.0f)});
   input.set_latency_tag(AudioLatency::Type::kRtc);
+  input.set_offload_enabled(true);
 
   AudioParameters::HardwareCapabilities hardware_capabilities(
       /*min_frames_per_buffer=*/128, /*max_frames_per_buffer=*/1024,
@@ -40,6 +41,7 @@ TEST(AudioParametersStructTraitsTest, NormalRoundTrip) {
   EXPECT_EQ(output.mic_positions(), input.mic_positions());
   EXPECT_EQ(output.latency_tag(), input.latency_tag());
   EXPECT_EQ(output.hardware_capabilities(), input.hardware_capabilities());
+  EXPECT_EQ(output.offload_enabled(), input.offload_enabled());
 }
 
 TEST(AudioParametersStructTraitsTest, DiscreteRoundTrip) {
@@ -54,6 +56,7 @@ TEST(AudioParametersStructTraitsTest, DiscreteRoundTrip) {
   EXPECT_EQ(output.channel_layout_config(), input.channel_layout_config());
   EXPECT_EQ(output.sample_rate(), input.sample_rate());
   EXPECT_EQ(output.frames_per_buffer(), input.frames_per_buffer());
+  EXPECT_EQ(output.offload_enabled(), input.offload_enabled());
 }
 
 mojom::AudioParametersPtr CreateValidMojomAudioParameters() {

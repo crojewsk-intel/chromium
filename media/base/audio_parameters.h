@@ -281,6 +281,13 @@ class MEDIA_EXPORT AudioParameters {
                   int frames_per_buffer,
                   const HardwareCapabilities& hardware_capabilities);
 
+  AudioParameters(Format format,
+                  ChannelLayoutConfig channel_layout_config,
+                  int sample_rate,
+                  int frames_per_buffer,
+                  const HardwareCapabilities& hardware_capabilities,
+                  const HardwareCapabilities& offload_capabilities);
+
   ~AudioParameters();
 
   // Re-initializes all members except for |hardware_capabilities_|.
@@ -318,6 +325,11 @@ class MEDIA_EXPORT AudioParameters {
 
   bool RequireEncapsulation() const;
 
+  // Return true if the hardware is capable of audio offload.
+  bool OffloadCapable() const;
+
+  int GetOffloadFramesPerBuffer() const;
+
   void set_format(Format format) { format_ = format; }
   Format format() const { return format_; }
 
@@ -350,6 +362,13 @@ class MEDIA_EXPORT AudioParameters {
     hardware_capabilities_ = hwc;
   }
 
+  std::optional<HardwareCapabilities> offload_capabilities() const {
+    return offload_capabilities_;
+  }
+
+  void set_offload_enabled(bool flag) { offload_enabled_ = flag; }
+  bool offload_enabled() const { return offload_enabled_; }
+
   void set_effects(int effects) { effects_ = effects; }
   int effects() const { return effects_; }
 
@@ -376,6 +395,7 @@ class MEDIA_EXPORT AudioParameters {
   int sample_rate_;                            // Sampling frequency/rate.
   int frames_per_buffer_;                      // Number of frames in a buffer.
   int effects_;  // Bitmask using PlatformEffectsMask.
+  bool offload_enabled_ = false;               // Whether offload_capabilities_ are to be used.
 
   // Microphone positions using Cartesian coordinates:
   // x: the horizontal dimension, with positive to the right from the camera's
@@ -397,6 +417,8 @@ class MEDIA_EXPORT AudioParameters {
   // Audio hardware specific parameters, these are treated as read-only and
   // changing them has no effect.
   std::optional<HardwareCapabilities> hardware_capabilities_;
+  // Set when the hardware is capable to offload CPU from audio processing.
+  std::optional<HardwareCapabilities> offload_capabilities_;
 };
 
 // Comparison is useful when AudioParameters is used with std structures.

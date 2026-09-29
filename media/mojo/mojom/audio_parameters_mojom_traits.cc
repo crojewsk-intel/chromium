@@ -172,6 +172,7 @@ bool StructTraits<
   output->set_effects(input.effects());
   output->set_mic_positions(std::move(mic_positions));
   output->set_latency_tag(latency_tag);
+  output->set_offload_enabled(input.offload_enabled());
 
   return output->IsValid();
 }

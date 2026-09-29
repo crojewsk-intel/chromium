@@ -245,6 +245,19 @@ AudioParameters::AudioParameters(
   Reset(format, channel_layout_config, sample_rate, frames_per_buffer);
 }
 
+AudioParameters::AudioParameters(
+    Format format,
+    ChannelLayoutConfig channel_layout_config,
+    int sample_rate,
+    int frames_per_buffer,
+    const HardwareCapabilities& hardware_capabilities,
+    const HardwareCapabilities& offload_capabilities)
+    : latency_tag_(AudioLatency::Type::kUnknown),
+      hardware_capabilities_(hardware_capabilities),
+      offload_capabilities_(offload_capabilities) {
+  Reset(format, channel_layout_config, sample_rate, frames_per_buffer);
+}
+
 AudioParameters::~AudioParameters() = default;
 
 AudioParameters::AudioParameters(const AudioParameters&) = default;
@@ -301,6 +314,14 @@ std::string AudioParameters::AsHumanReadableString() const {
       << ", require_encapsulation:"
       << hardware_capabilities_->require_encapsulation;
   }
+  if (offload_capabilities_.has_value()) {
+    s << ", offload_capabilities: min_frames_per_buffer: "
+      << offload_capabilities_->min_frames_per_buffer
+      << ", max_frames_per_buffer: "
+      << offload_capabilities_->max_frames_per_buffer
+      << ", default_frames_per_buffer: "
+      << offload_capabilities_->default_frames_per_buffer;
+  }
   return s.str();
 }
 
@@ -354,6 +375,20 @@ void AudioParameters::SetChannelLayoutConfig(ChannelLayout layout,
 bool AudioParameters::RequireEncapsulation() const {
   return hardware_capabilities_.has_value() &&
          hardware_capabilities_->require_encapsulation;
+}
+
+bool AudioParameters::OffloadCapable() const {
+  return offload_capabilities_.has_value() &&
+         offload_capabilities_->default_frames_per_buffer;
+}
+
+int AudioParameters::GetOffloadFramesPerBuffer() const {
+  if (!offload_capabilities_.has_value())
+    return 0;
+
+  const HardwareCapabilities& caps = offload_capabilities_.value();
+  return std::min(caps.max_frames_per_buffer,
+                  std::max(caps.min_frames_per_buffer, caps.default_frames_per_buffer));
 }
 
 // static

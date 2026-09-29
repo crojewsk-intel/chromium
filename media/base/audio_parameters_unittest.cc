@@ -55,6 +55,8 @@ TEST(AudioParameters, Constructor_ParameterValues) {
   EXPECT_EQ(expected_rate, params.sample_rate());
   EXPECT_EQ(expected_samples, params.frames_per_buffer());
   EXPECT_FALSE(params.RequireEncapsulation());
+  EXPECT_FALSE(params.OffloadCapable());
+  EXPECT_EQ(0, params.GetOffloadFramesPerBuffer());
 }
 
 TEST(AudioParameters, Constructor_ParameterValuesPlusHardwareCapabilities) {
@@ -77,6 +79,8 @@ TEST(AudioParameters, Constructor_ParameterValuesPlusHardwareCapabilities) {
   EXPECT_EQ(expected_rate, params.sample_rate());
   EXPECT_EQ(expected_samples, params.frames_per_buffer());
   EXPECT_TRUE(params.RequireEncapsulation());
+  EXPECT_FALSE(params.OffloadCapable());
+  EXPECT_EQ(0, params.GetOffloadFramesPerBuffer());
 }
 
 TEST(AudioParameters, GetBytesPerBuffer) {
